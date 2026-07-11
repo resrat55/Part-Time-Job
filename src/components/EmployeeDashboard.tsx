@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { EmployeeProfile, AttendanceRecord, SystemConfig } from '../types';
-import { getEmployeeAttendance } from '../dbUtils';
+import { getEmployeeAttendance, deleteAttendanceRecord, deleteAdvanceRequest } from '../dbUtils';
 import AttendanceForm from './AttendanceForm';
 import AdvanceRequestForm from './AdvanceRequestForm';
 import {
@@ -14,9 +14,9 @@ import {
   ArrowRightLeft,
   Moon,
   Sun,
-  FileCheck2,
   Calendar,
-  Sparkles
+  Sparkles,
+  Trash2
 } from 'lucide-react';
 
 interface EmployeeDashboardProps {
@@ -38,7 +38,6 @@ export default function EmployeeDashboard({ profile, config, onLogout }: Employe
     totalHours: 0,
     dayHours: 0,
     nightHours: 0,
-    pendingAdvance: 0,
   });
 
   const loadData = async () => {
@@ -70,17 +69,11 @@ export default function EmployeeDashboard({ profile, config, onLogout }: Employe
       .filter((r) => r.shiftType === 'night')
       .reduce((sum, r) => sum + r.hoursWorked, 0);
 
-    // Fetch advance stats using direct collection query inside here for simplicity
-    // or through local state. Let's count advances in the selected period.
-    // We will do it inside loadData or a custom fetch.
-    // To make it very solid, let's fetch advances from Firestore for calculations!
+    // Fetch advance stats from storage
     import('../dbUtils').then(async (dbUtils) => {
       const advs = await dbUtils.getEmployeeAdvanceRequests(profile.uid, selectedPeriod);
       const approvedAdvance = advs
         .filter((a) => a.status === 'approved')
-        .reduce((sum, a) => sum + a.amount, 0);
-      const pendingAdvance = advs
-        .filter((a) => a.status === 'pending')
         .reduce((sum, a) => sum + a.amount, 0);
 
       setStats({
@@ -90,10 +83,9 @@ export default function EmployeeDashboard({ profile, config, onLogout }: Employe
         totalHours,
         dayHours,
         nightHours,
-        pendingAdvance,
       });
     });
-  }, [attendance, profile.uid, selectedPeriod]);
+  }, [attendance, profile.uid, selectedPeriod, refreshTrigger]);
 
   // Generate available periods for selector (current month and previous 5 months)
   const getPeriodOptions = () => {
@@ -114,22 +106,29 @@ export default function EmployeeDashboard({ profile, config, onLogout }: Employe
     setRefreshTrigger((prev) => prev + 1);
   };
 
+  const handleDeleteAttendance = async (id: string) => {
+    if (confirm('Are you sure you want to delete this attendance log?')) {
+      await deleteAttendanceRecord(id);
+      handleRefresh();
+    }
+  };
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
       {/* Upper Header Profile Block */}
       <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 shadow-sm flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div className="flex items-center space-x-4">
-          <div className="h-14 w-14 bg-indigo-600/10 text-indigo-450 rounded-2xl flex items-center justify-center font-bold text-xl border border-indigo-500/20 shrink-0">
+          <div className="h-14 w-14 bg-indigo-600/10 text-indigo-400 rounded-2xl flex items-center justify-center font-bold text-xl border border-indigo-500/20 shrink-0">
             {profile.name.charAt(0)}
           </div>
           <div>
             <h1 className="text-xl font-extrabold text-zinc-50 font-sans tracking-tight">{profile.name}</h1>
-            <p className="text-xs text-zinc-450 font-medium flex items-center mt-1">
-              <User className="h-3 w-3 mr-1 text-indigo-450" />
+            <p className="text-xs text-zinc-400 font-medium flex items-center mt-1">
+              <User className="h-3 w-3 mr-1 text-indigo-400" />
               {profile.designation}
-              <span className="mx-2 text-zinc-700">|</span>
-              <CalendarDays className="h-3 w-3 mr-1 text-zinc-500" />
-              Joined: {new Date(profile.joinedDate).toLocaleDateString()}
+              <span className="mx-2 text-zinc-750">|</span>
+              <CalendarDays className="h-3 w-3 mr-1 text-zinc-550" />
+              Hourly Rate: {profile.hourlyRate} ৳/hr
             </p>
           </div>
         </div>
@@ -171,7 +170,7 @@ export default function EmployeeDashboard({ profile, config, onLogout }: Employe
         <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 shadow-sm relative overflow-hidden flex flex-col justify-between">
           <div className="flex justify-between items-start">
             <div className="space-y-1">
-              <span className="text-xs font-semibold text-zinc-450 uppercase tracking-wider font-sans">
+              <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wider font-sans">
                 Total Salary Earned
               </span>
               <h2 className="text-3xl font-extrabold text-zinc-50 font-sans mt-1">
@@ -182,9 +181,9 @@ export default function EmployeeDashboard({ profile, config, onLogout }: Employe
               <Coins className="h-6 w-6" />
             </div>
           </div>
-          <div className="border-t border-zinc-850 pt-4 mt-6 flex justify-between text-xs text-zinc-500 font-sans">
+          <div className="border-t border-zinc-850 pt-4 mt-6 flex justify-between text-xs text-zinc-550 font-sans">
             <span>Hours Worked: {stats.totalHours} hrs</span>
-            <span className="text-emerald-400 font-medium">Approved Attendance</span>
+            <span className="text-emerald-400 font-medium">Automatic Calculations</span>
           </div>
         </div>
 
@@ -192,8 +191,8 @@ export default function EmployeeDashboard({ profile, config, onLogout }: Employe
         <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 shadow-sm relative overflow-hidden flex flex-col justify-between">
           <div className="flex justify-between items-start">
             <div className="space-y-1">
-              <span className="text-xs font-semibold text-zinc-450 uppercase tracking-wider font-sans">
-                Advance Salary Subtracted
+              <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wider font-sans">
+                Advance Salary Deducted
               </span>
               <h2 className="text-3xl font-extrabold text-zinc-50 font-sans mt-1">
                 {stats.advanceTaken.toLocaleString()} ৳
@@ -203,9 +202,9 @@ export default function EmployeeDashboard({ profile, config, onLogout }: Employe
               <ArrowRightLeft className="h-6 w-6" />
             </div>
           </div>
-          <div className="border-t border-zinc-850 pt-4 mt-6 flex justify-between text-xs text-zinc-500 font-sans">
-            <span>Pending Approvals: {stats.pendingAdvance} ৳</span>
-            <span className="text-rose-455 font-medium">Subtracted automatically</span>
+          <div className="border-t border-zinc-850 pt-4 mt-6 flex justify-between text-xs text-zinc-550 font-sans">
+            <span>Instant Deductions</span>
+            <span className="text-rose-400 font-medium">Auto-Approved Offline</span>
           </div>
         </div>
 
@@ -224,11 +223,11 @@ export default function EmployeeDashboard({ profile, config, onLogout }: Employe
               <Wallet className="h-6 w-6" />
             </div>
           </div>
-          <div className="border-t border-indigo-950/50 pt-4 mt-6 flex justify-between text-xs text-indigo-350 font-sans">
+          <div className="border-t border-indigo-950/50 pt-4 mt-6 flex justify-between text-xs text-indigo-300 font-sans">
             <span>Pay Cycle: {selectedPeriod}</span>
             <span className="font-extrabold text-amber-400 flex items-center">
-              <Sparkles className="h-3.5 w-3.5 mr-1 text-amber-400" />
-              Running Salary
+              <Sparkles className="h-3.5 w-3.5 mr-1 text-amber-400 animate-pulse" />
+              Running Net Total
             </span>
           </div>
         </div>
@@ -258,16 +257,17 @@ export default function EmployeeDashboard({ profile, config, onLogout }: Employe
               <div className="py-12 flex flex-col items-center justify-center text-center">
                 <Clock className="h-10 w-10 text-zinc-700 mb-2" />
                 <p className="text-sm font-semibold text-zinc-400 font-sans">No attendance logs found</p>
-                <p className="text-xs text-zinc-500 font-sans mt-0.5">Use the attendance form to log your shifts</p>
+                <p className="text-xs text-zinc-550 font-sans mt-0.5">Use the attendance form to log your shifts</p>
               </div>
             ) : (
-              <div className="min-w-[600px] divide-y divide-zinc-850">
-                <div className="grid grid-cols-12 gap-2 pb-2.5 text-xs font-semibold text-zinc-500 uppercase tracking-wider font-sans">
+              <div className="min-w-[600px] divide-y divide-zinc-850 font-sans">
+                <div className="grid grid-cols-12 gap-2 pb-2.5 text-xs font-semibold text-zinc-550 uppercase tracking-wider">
                   <div className="col-span-3">Date / Shift</div>
                   <div className="col-span-3">Times (Hours)</div>
-                  <div className="col-span-2 text-right">Hourly Rate</div>
-                  <div className="col-span-2 text-right">Bonus</div>
+                  <div className="col-span-2 text-right">Rate</div>
+                  <div className="col-span-1 text-right">Bonus</div>
                   <div className="col-span-2 text-right text-indigo-400 font-bold">Earned</div>
+                  <div className="col-span-1 text-center">Action</div>
                 </div>
 
                 <div className="space-y-1.5 pt-1.5 max-h-[360px] overflow-y-auto pr-1">
@@ -296,10 +296,10 @@ export default function EmployeeDashboard({ profile, config, onLogout }: Employe
 
                       {/* Times (Hours) */}
                       <div className="col-span-3 font-mono">
-                        <p className="text-xs text-zinc-300">
+                        <p className="text-xs text-zinc-350">
                           {rec.startTime} - {rec.endTime}
                         </p>
-                        <p className="text-[10px] text-zinc-500 mt-0.5">
+                        <p className="text-[10px] text-zinc-550 mt-0.5">
                           {rec.hoursWorked} Worked Hours
                         </p>
                       </div>
@@ -310,17 +310,28 @@ export default function EmployeeDashboard({ profile, config, onLogout }: Employe
                       </div>
 
                       {/* Bonus */}
-                      <div className="col-span-2 text-right font-semibold text-zinc-300">
+                      <div className="col-span-1 text-right font-semibold text-zinc-300">
                         {rec.bonusApplied > 0 ? (
-                          <span className="text-indigo-450 font-bold">+{rec.bonusApplied} ৳</span>
+                          <span className="text-indigo-400 font-bold">+{rec.bonusApplied} ৳</span>
                         ) : (
-                          <span className="text-zinc-600">—</span>
+                          <span className="text-zinc-650">—</span>
                         )}
                       </div>
 
                       {/* Earned amount */}
-                      <div className="col-span-2 text-right font-extrabold text-zinc-100 font-sans">
+                      <div className="col-span-2 text-right font-extrabold text-zinc-100">
                         {rec.earnedAmount} ৳
+                      </div>
+
+                      {/* Delete Action */}
+                      <div className="col-span-1 flex justify-center">
+                        <button
+                          onClick={() => handleDeleteAttendance(rec.id)}
+                          className="p-1 text-zinc-500 hover:text-red-400 hover:bg-red-955/20 rounded-lg transition-colors cursor-pointer"
+                          title="Delete Attendance record"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
                       </div>
                     </div>
                   ))}
@@ -335,8 +346,8 @@ export default function EmployeeDashboard({ profile, config, onLogout }: Employe
               <p className="text-sm font-bold text-zinc-300 font-mono mt-0.5">{stats.dayHours} hrs worked</p>
             </div>
             <div>
-              <p className="text-indigo-450 uppercase tracking-wider font-semibold font-sans">Night Shift Stats</p>
-              <p className="text-sm font-bold text-indigo-450 font-mono mt-0.5">{stats.nightHours} hrs worked</p>
+              <p className="text-indigo-400 uppercase tracking-wider font-semibold font-sans">Night Shift Stats</p>
+              <p className="text-sm font-bold text-indigo-400 font-mono mt-0.5">{stats.nightHours} hrs worked</p>
             </div>
           </div>
         </div>

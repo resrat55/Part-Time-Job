@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { EmployeeProfile, AdvanceRequest, SystemConfig } from '../types';
-import { submitAdvanceRequest, getEmployeeAdvanceRequests } from '../dbUtils';
-import { Landmark, ArrowUpRight, HelpCircle, AlertCircle, History, Clock, CheckCircle2, XCircle } from 'lucide-react';
+import { submitAdvanceRequest, getEmployeeAdvanceRequests, deleteAdvanceRequest } from '../dbUtils';
+import { Landmark, ArrowUpRight, HelpCircle, AlertCircle, History, Clock, CheckCircle2, XCircle, Trash2 } from 'lucide-react';
 
 interface AdvanceRequestFormProps {
   profile: EmployeeProfile;
@@ -30,6 +30,14 @@ export default function AdvanceRequestForm({ profile, config, onSuccess, refresh
   useEffect(() => {
     fetchRequests();
   }, [profile.uid, config.currentPayPeriod, refreshTrigger]);
+
+  const handleDelete = async (id: string) => {
+    if (confirm('Are you sure you want to delete this advance request?')) {
+      await deleteAdvanceRequest(id);
+      onSuccess();
+      await fetchRequests();
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -182,25 +190,34 @@ export default function AdvanceRequestForm({ profile, config, onSuccess, refresh
                   )}
                 </div>
 
-                <div>
-                  {req.status === 'pending' && (
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-950/30 text-amber-400 border border-amber-900/40 space-x-1">
-                      <Clock className="h-3 w-3 shrink-0" />
-                      <span>Pending</span>
-                    </span>
-                  )}
-                  {req.status === 'approved' && (
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-955/30 text-emerald-400 border border-emerald-900/40 space-x-1">
-                      <CheckCircle2 className="h-3 w-3 shrink-0" />
-                      <span>Approved</span>
-                    </span>
-                  )}
-                  {req.status === 'rejected' && (
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-red-955/30 text-red-400 border border-red-900/40 space-x-1">
-                      <XCircle className="h-3 w-3 shrink-0" />
-                      <span>Rejected</span>
-                    </span>
-                  )}
+                <div className="flex flex-col items-end space-y-2 shrink-0">
+                  <div>
+                    {req.status === 'pending' && (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-950/30 text-amber-400 border border-amber-900/40 space-x-1">
+                        <Clock className="h-3 w-3 shrink-0" />
+                        <span>Pending</span>
+                      </span>
+                    )}
+                    {req.status === 'approved' && (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-955/30 text-emerald-400 border border-emerald-900/40 space-x-1">
+                        <CheckCircle2 className="h-3 w-3 shrink-0" />
+                        <span>Approved</span>
+                      </span>
+                    )}
+                    {req.status === 'rejected' && (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-red-955/30 text-red-400 border border-red-900/40 space-x-1">
+                        <XCircle className="h-3 w-3 shrink-0" />
+                        <span>Rejected</span>
+                      </span>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => handleDelete(req.id)}
+                    className="p-1 text-zinc-500 hover:text-red-400 hover:bg-red-955/20 rounded-lg transition-colors cursor-pointer"
+                    title="Delete advance request"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
                 </div>
               </div>
             ))
