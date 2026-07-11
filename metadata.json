@@ -1,0 +1,6 @@
+{
+  "name": "Attendance and Salary Tracker",
+  "description": "An office hour attendance tracker and salary calculator with employee dashboards, HR approvals for advances, and shift-based earnings calculation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
