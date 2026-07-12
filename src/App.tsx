@@ -100,6 +100,7 @@ export default function App() {
           profile={profile}
           config={config}
           onLogout={handleLogout}
+          onProfileUpdate={() => setRefreshTrigger((prev) => prev + 1)}
         />
       </main>
 

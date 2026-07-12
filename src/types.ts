@@ -51,3 +51,11 @@ export interface SystemConfig {
   nightShiftAllowance: number;
   currentPayPeriod: string; // YYYY-MM
 }
+
+export interface Announcement {
+  id: string;
+  title: string;
+  content: string;
+  createdAt: string;
+}
+

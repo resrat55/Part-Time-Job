@@ -62,13 +62,13 @@ export default function AdvanceRequestForm({ profile, config, onSuccess, refresh
         employeeName: profile.name,
         amount: amtNum,
         reason: reason.trim(),
-        status: 'pending',
+        status: 'approved',
         payPeriod: config.currentPayPeriod,
         requestedAt: new Date().toISOString(),
       };
 
       await submitAdvanceRequest(newRequest);
-      setSuccess('Advance request submitted successfully. Waiting for HR approval.');
+      setSuccess('Advance request submitted and auto-approved instantly!');
       setAmount('');
       setReason('');
       onSuccess();
@@ -114,8 +114,8 @@ export default function AdvanceRequestForm({ profile, config, onSuccess, refresh
               <input
                 type="number"
                 required
-                min="100"
-                step="50"
+                min="1"
+                step="any"
                 placeholder="e.g. 2000"
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}

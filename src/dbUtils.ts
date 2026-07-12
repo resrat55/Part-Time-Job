@@ -3,7 +3,8 @@ import {
   AttendanceRecord,
   AdvanceRequest,
   SystemConfig,
-  RecordStatus
+  RecordStatus,
+  Announcement
 } from './types';
 
 // We always run in local offline mode now as requested by the user
@@ -107,6 +108,66 @@ export async function updateEmployeeRate(uid: string, newRate: number): Promise<
   }
 }
 
+export async function updateEmployeeProfileFields(uid: string, fields: Partial<EmployeeProfile>): Promise<void> {
+  const users = getLocalUsers();
+  const index = users.findIndex((u) => u.uid === uid);
+  if (index >= 0) {
+    users[index] = { ...users[index], ...fields };
+    saveLocalUsers(users);
+    
+    // Also synchronize current session if we are editing the logged in user
+    const currentSession = localStorage.getItem('attendance_local_user');
+    if (currentSession) {
+      try {
+        const parsed = JSON.parse(currentSession);
+        if (parsed.uid === uid) {
+          const updatedSession = { ...parsed, name: users[index].name, hourlyRate: users[index].hourlyRate, designation: users[index].designation };
+          localStorage.setItem('attendance_local_user', JSON.stringify(updatedSession));
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    }
+  }
+}
+
+// Announcements helper functions
+export async function getAnnouncements(): Promise<Announcement[]> {
+  const data = localStorage.getItem('attendance_local_announcements');
+  if (!data) {
+    // Seed one starter announcement as instruction reference
+    const starter: Announcement[] = [
+      {
+        id: 'ann_starter',
+        title: 'Welcome to your Offline Attendance and Payroll Portal!',
+        content: 'You can now update your attendance hourly rates, log day or night shifts, apply for salary advances, and post important reference messages directly in your profile tab.',
+        createdAt: new Date().toISOString()
+      }
+    ];
+    localStorage.setItem('attendance_local_announcements', JSON.stringify(starter));
+    return starter;
+  }
+  return JSON.parse(data);
+}
+
+export async function addAnnouncement(title: string, content: string): Promise<void> {
+  const list = await getAnnouncements();
+  const newAnn: Announcement = {
+    id: `ann_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
+    title,
+    content,
+    createdAt: new Date().toISOString()
+  };
+  list.unshift(newAnn); // Add newest first
+  localStorage.setItem('attendance_local_announcements', JSON.stringify(list));
+}
+
+export async function deleteAnnouncement(id: string): Promise<void> {
+  const list = await getAnnouncements();
+  const filtered = list.filter(item => item.id !== id);
+  localStorage.setItem('attendance_local_announcements', JSON.stringify(filtered));
+}
+
 // Attendance Records
 export async function addAttendanceRecord(record: Omit<AttendanceRecord, 'id'>): Promise<string> {
   const records = getLocalAttendance();
@@ -144,6 +205,15 @@ export async function deleteAttendanceRecord(id: string): Promise<void> {
   const records = getLocalAttendance();
   const filtered = records.filter((r) => r.id !== id);
   saveLocalAttendance(filtered);
+}
+
+export async function updateAttendanceRecord(id: string, updatedFields: Partial<AttendanceRecord>): Promise<void> {
+  const records = getLocalAttendance();
+  const index = records.findIndex((r) => r.id === id);
+  if (index >= 0) {
+    records[index] = { ...records[index], ...updatedFields };
+    saveLocalAttendance(records);
+  }
 }
 
 // Advance Requests
