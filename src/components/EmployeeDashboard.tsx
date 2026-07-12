@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { EmployeeProfile, AttendanceRecord, SystemConfig, Announcement } from '../types';
+import { EmployeeProfile, AttendanceRecord, SystemConfig, Announcement, AdvanceRequest } from '../types';
 import {
   getEmployeeAttendance,
   deleteAttendanceRecord,
   updateEmployeeProfileFields,
   getAnnouncements,
   addAnnouncement,
-  deleteAnnouncement
+  deleteAnnouncement,
+  getEmployeeAllAttendance,
+  getEmployeeAllAdvances
 } from '../dbUtils';
 import AttendanceForm from './AttendanceForm';
 import AdvanceRequestForm from './AdvanceRequestForm';
@@ -27,7 +29,13 @@ import {
   Edit2,
   FileText,
   Plus,
-  AlertCircle
+  AlertCircle,
+  BarChart3,
+  TrendingUp,
+  Printer,
+  Clipboard,
+  ClipboardCheck,
+  RefreshCw
 } from 'lucide-react';
 
 interface EmployeeDashboardProps {
@@ -38,9 +46,13 @@ interface EmployeeDashboardProps {
 }
 
 export default function EmployeeDashboard({ profile, config, onLogout, onProfileUpdate }: EmployeeDashboardProps) {
-  const [activeTab, setActiveTab] = useState<'overview' | 'attendance' | 'advance' | 'profile'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'attendance' | 'advance' | 'analytics' | 'profile'>('overview');
   const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
+  const [allAttendance, setAllAttendance] = useState<AttendanceRecord[]>([]);
+  const [allAdvances, setAllAdvances] = useState<AdvanceRequest[]>([]);
   const [selectedPeriod, setSelectedPeriod] = useState(config.currentPayPeriod);
+  const [analyticsPeriod, setAnalyticsPeriod] = useState(config.currentPayPeriod);
+  const [copiedNotification, setCopiedNotification] = useState(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [editingRecord, setEditingRecord] = useState<AttendanceRecord | null>(null);
 
@@ -84,6 +96,11 @@ export default function EmployeeDashboard({ profile, config, onLogout, onProfile
     try {
       const records = await getEmployeeAttendance(profile.uid, selectedPeriod);
       setAttendance(records);
+      
+      const allAtts = await getEmployeeAllAttendance(profile.uid);
+      const allAdvs = await getEmployeeAllAdvances(profile.uid);
+      setAllAttendance(allAtts);
+      setAllAdvances(allAdvs);
     } catch (err) {
       console.error('Error loading employee dashboard data:', err);
     }
@@ -138,6 +155,159 @@ export default function EmployeeDashboard({ profile, config, onLogout, onProfile
       date.setMonth(date.getMonth() - 1);
     }
     return options;
+  };
+
+  const getMonthlyAnalytics = () => {
+    const monthlyMap: Record<string, {
+      period: string;
+      label: string;
+      earned: number;
+      hours: number;
+      advances: number;
+      net: number;
+      dayHours: number;
+      nightHours: number;
+    }> = {};
+
+    // Get list of last 6 months to ensure they're populated in order
+    const date = new Date();
+    for (let i = 0; i < 6; i++) {
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const period = `${year}-${month}`;
+      const label = date.toLocaleString('default', { month: 'short', year: '2-digit' });
+      monthlyMap[period] = {
+        period,
+        label,
+        earned: 0,
+        hours: 0,
+        advances: 0,
+        net: 0,
+        dayHours: 0,
+        nightHours: 0
+      };
+      date.setMonth(date.getMonth() - 1);
+    }
+
+    // Accumulate all approved attendance logs
+    allAttendance.forEach((r) => {
+      if (r.status !== 'approved') return;
+      const period = r.payPeriod;
+      
+      if (!monthlyMap[period]) {
+        const [yr, mn] = period.split('-');
+        const dummyDate = new Date(parseInt(yr), parseInt(mn) - 1, 1);
+        const label = dummyDate.toLocaleString('default', { month: 'short', year: '2-digit' });
+        monthlyMap[period] = {
+          period,
+          label,
+          earned: 0,
+          hours: 0,
+          advances: 0,
+          net: 0,
+          dayHours: 0,
+          nightHours: 0
+        };
+      }
+
+      monthlyMap[period].earned += r.earnedAmount;
+      monthlyMap[period].hours += r.hoursWorked;
+      if (r.shiftType === 'day') {
+        monthlyMap[period].dayHours += r.hoursWorked;
+      } else {
+        monthlyMap[period].nightHours += r.hoursWorked;
+      }
+    });
+
+    // Accumulate all approved advance logs
+    allAdvances.forEach((a) => {
+      if (a.status !== 'approved') return;
+      const period = a.payPeriod;
+      
+      if (!monthlyMap[period]) {
+        const [yr, mn] = period.split('-');
+        const dummyDate = new Date(parseInt(yr), parseInt(mn) - 1, 1);
+        const label = dummyDate.toLocaleString('default', { month: 'short', year: '2-digit' });
+        monthlyMap[period] = {
+          period,
+          label,
+          earned: 0,
+          hours: 0,
+          advances: 0,
+          net: 0,
+          dayHours: 0,
+          nightHours: 0
+        };
+      }
+      monthlyMap[period].advances += a.amount;
+    });
+
+    // Compute net pay and clean decimals
+    Object.keys(monthlyMap).forEach((p) => {
+      monthlyMap[p].net = monthlyMap[p].earned - monthlyMap[p].advances;
+      monthlyMap[p].earned = Math.round(monthlyMap[p].earned);
+      monthlyMap[p].hours = parseFloat(monthlyMap[p].hours.toFixed(1));
+      monthlyMap[p].dayHours = parseFloat(monthlyMap[p].dayHours.toFixed(1));
+      monthlyMap[p].nightHours = parseFloat(monthlyMap[p].nightHours.toFixed(1));
+    });
+
+    return Object.values(monthlyMap).sort((a, b) => a.period.localeCompare(b.period));
+  };
+
+  const getSelectedMonthReportData = () => {
+    const monthAtts = allAttendance.filter(r => r.payPeriod === analyticsPeriod && r.status === 'approved');
+    const monthAdvs = allAdvances.filter(a => a.payPeriod === analyticsPeriod && a.status === 'approved');
+
+    const totalEarned = monthAtts.reduce((sum, r) => sum + r.earnedAmount, 0);
+    const totalHours = monthAtts.reduce((sum, r) => sum + r.hoursWorked, 0);
+    const dayHours = monthAtts.filter(r => r.shiftType === 'day').reduce((sum, r) => sum + r.hoursWorked, 0);
+    const nightHours = monthAtts.filter(r => r.shiftType === 'night').reduce((sum, r) => sum + r.hoursWorked, 0);
+    const advanceTaken = monthAdvs.reduce((sum, a) => sum + a.amount, 0);
+    const netPayable = totalEarned - advanceTaken;
+
+    return {
+      monthAtts,
+      monthAdvs,
+      totalEarned,
+      totalHours,
+      dayHours,
+      nightHours,
+      advanceTaken,
+      netPayable
+    };
+  };
+
+  const copyReportToClipboard = () => {
+    const data = getSelectedMonthReportData();
+    const [year, month] = analyticsPeriod.split('-');
+    const dateObj = new Date(parseInt(year), parseInt(month) - 1, 1);
+    const monthName = dateObj.toLocaleString('default', { month: 'long', year: 'numeric' });
+
+    const reportText = `╔══════════════════════════════════════════════╗
+  MONTHLY ATTENDANCE & PAYROLL STATEMENT
+╚══════════════════════════════════════════════╝
+  Month:       ${monthName}
+  Employee:    ${profile.name}
+  Designation: ${profile.designation}
+  Standard Rate: ${profile.hourlyRate} ৳/hr
+────────────────────────────────────────────────
+  SUMMARY METRICS:
+  • Total Worked Hours: ${data.totalHours} hrs
+    - Day Shifts:       ${data.dayHours} hrs
+    - Night Shifts:     ${data.nightHours} hrs
+  • Gross Salary Earned: ${data.totalEarned} ৳
+  • Salary Advances:     ${data.advanceTaken} ৳
+────────────────────────────────────────────────
+  NET PAYABLE:          ${data.netPayable} ৳
+────────────────────────────────────────────────
+  Generated via Offline Salary Registry Portal
+  Date: ${new Date().toLocaleDateString()}
+╚══════════════════════════════════════════════╝`;
+
+    navigator.clipboard.writeText(reportText).then(() => {
+      setCopiedNotification(true);
+      setTimeout(() => setCopiedNotification(false), 2500);
+    }).catch(err => console.error(err));
   };
 
   const handleRefresh = () => {
@@ -255,15 +425,6 @@ export default function EmployeeDashboard({ profile, config, onLogout, onProfile
             </select>
             <div className="absolute right-3 top-3.5 pointer-events-none border-l-4 border-r-4 border-t-4 border-transparent border-t-zinc-500 w-0 h-0"></div>
           </div>
-
-          <button
-            onClick={onLogout}
-            className="border border-zinc-800 hover:bg-red-955/20 hover:text-red-400 rounded-xl p-2 text-zinc-400 transition-colors flex items-center space-x-1.5 cursor-pointer"
-            title="Log Out"
-          >
-            <LogOut className="h-4 w-4" />
-            <span className="text-xs font-semibold hidden sm:inline">Sign Out</span>
-          </button>
         </div>
       </div>
 
@@ -303,6 +464,18 @@ export default function EmployeeDashboard({ profile, config, onLogout, onProfile
         >
           <ArrowRightLeft className="h-4.5 w-4.5" />
           <span>Salary Advances</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('analytics')}
+          className={`py-3 px-4 font-sans font-bold text-sm border-b-2 transition-all cursor-pointer flex items-center space-x-2 shrink-0 ${
+            activeTab === 'analytics'
+              ? 'border-indigo-500 text-indigo-400'
+              : 'border-transparent text-zinc-400 hover:text-zinc-200 hover:border-zinc-800'
+          }`}
+        >
+          <BarChart3 className="h-4.5 w-4.5 text-indigo-400" />
+          <span>Analytics & Reports</span>
         </button>
 
         <button
@@ -555,6 +728,411 @@ export default function EmployeeDashboard({ profile, config, onLogout, onProfile
           onSuccess={handleRefresh}
           refreshTrigger={refreshTrigger}
         />
+      )}
+
+      {activeTab === 'analytics' && (
+        <div className="space-y-6">
+          {/* Analytics Header & Month Filter */}
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div>
+              <h2 className="text-lg font-bold text-zinc-100 font-sans mb-1 flex items-center">
+                <BarChart3 className="h-5 w-5 mr-2 text-indigo-400" />
+                Monthly Analytics & Report Engine
+              </h2>
+              <p className="text-xs text-zinc-400 font-sans">
+                Interactive historical visual charts and formal pay-slip generator.
+              </p>
+            </div>
+            <div className="flex items-center space-x-2 shrink-0">
+              <span className="text-xs font-semibold text-zinc-400 font-sans">Report Month:</span>
+              <div className="relative">
+                <select
+                  value={analyticsPeriod}
+                  onChange={(e) => setAnalyticsPeriod(e.target.value)}
+                  className="bg-zinc-950 border border-zinc-800 rounded-xl py-2 pl-3 pr-8 text-xs font-bold text-zinc-300 focus:outline-none focus:border-indigo-500 transition-colors cursor-pointer appearance-none"
+                >
+                  {getPeriodOptions().map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+                <div className="absolute right-2.5 top-3.5 pointer-events-none border-l-4 border-r-4 border-t-4 border-transparent border-t-zinc-500 w-0 h-0"></div>
+              </div>
+            </div>
+          </div>
+
+          {/* Visual Graphs Row */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            {/* Custom 6-Month Trajectory Chart */}
+            <div className="lg:col-span-8 bg-zinc-900 border border-zinc-800 rounded-2xl p-6 shadow-sm">
+              <div className="flex justify-between items-center mb-6">
+                <div>
+                  <h3 className="text-sm font-bold text-zinc-200 font-sans flex items-center">
+                    <TrendingUp className="h-4 w-4 mr-1.5 text-indigo-400" />
+                    Salary Trajectory (6-Month Trend)
+                  </h3>
+                  <p className="text-[10px] text-zinc-500 font-sans mt-0.5">
+                    Gross earnings compared with Net pay after advance deductions
+                  </p>
+                </div>
+                {/* Chart Legends */}
+                <div className="flex items-center space-x-3 text-[10px] font-sans">
+                  <span className="flex items-center text-zinc-350">
+                    <span className="h-2 w-2 rounded-full bg-indigo-500 mr-1.5"></span>
+                    Gross Earned
+                  </span>
+                  <span className="flex items-center text-zinc-350">
+                    <span className="h-2 w-2 rounded-full bg-emerald-400 mr-1.5"></span>
+                    Net Received
+                  </span>
+                </div>
+              </div>
+
+              {/* Responsive SVG/HTML Bar Chart container */}
+              <div className="h-[250px] flex flex-col justify-between pt-4">
+                <div className="flex-1 flex items-end justify-between px-2 sm:px-6 relative">
+                  {/* Grid background lines */}
+                  <div className="absolute inset-x-0 top-0 bottom-0 flex flex-col justify-between pointer-events-none">
+                    <div className="border-b border-zinc-800/60 w-full h-0"></div>
+                    <div className="border-b border-zinc-800/60 w-full h-0"></div>
+                    <div className="border-b border-zinc-800/60 w-full h-0"></div>
+                    <div className="border-b border-zinc-800/40 w-full h-0"></div>
+                  </div>
+
+                  {getMonthlyAnalytics().map((month) => {
+                    const maxVal = Math.max(...getMonthlyAnalytics().map(m => m.earned), 1000);
+                    const grossHeight = `${(month.earned / maxVal) * 100}%`;
+                    const netHeight = `${(month.net / maxVal) * 100}%`;
+                    const hasData = month.earned > 0;
+
+                    return (
+                      <div key={month.period} className="flex flex-col items-center flex-1 mx-2 sm:mx-4 group relative z-10">
+                        {/* Hover values tooltip */}
+                        <div className="absolute bottom-full mb-2 bg-zinc-950 border border-zinc-800 rounded-xl p-2.5 shadow-xl text-center scale-0 group-hover:scale-100 transition-all origin-bottom duration-150 pointer-events-none z-30 min-w-[130px]">
+                          <p className="text-[10px] font-bold text-zinc-400 font-sans">{month.label} Metrics</p>
+                          <div className="border-t border-zinc-850 my-1"></div>
+                          <p className="text-xs text-zinc-200 font-bold font-mono">Gross: {month.earned} ৳</p>
+                          <p className="text-xs text-emerald-400 font-bold font-mono">Net: {month.net} ৳</p>
+                          <p className="text-[9px] text-zinc-500 font-sans mt-0.5">{month.hours} Worked Hrs</p>
+                        </div>
+
+                        {/* Bar pillars */}
+                        <div className="w-full flex justify-center items-end space-x-1 sm:space-x-2 h-[160px] relative">
+                          {hasData ? (
+                            <>
+                              {/* Gross Salary Bar */}
+                              <div
+                                style={{ height: grossHeight }}
+                                className="w-[12px] sm:w-[18px] bg-gradient-to-t from-indigo-700 to-indigo-500 rounded-t-md transition-all duration-500 shadow-md group-hover:brightness-110"
+                              ></div>
+                              {/* Net Salary Bar */}
+                              <div
+                                style={{ height: netHeight }}
+                                className="w-[12px] sm:w-[18px] bg-gradient-to-t from-emerald-600 to-emerald-400 rounded-t-md transition-all duration-500 shadow-md group-hover:brightness-110"
+                              ></div>
+                            </>
+                          ) : (
+                            <div className="h-2 w-4 bg-zinc-800/40 rounded-full"></div>
+                          )}
+                        </div>
+
+                        {/* Month Label */}
+                        <span className="text-[10px] font-bold text-zinc-400 mt-2 font-sans group-hover:text-zinc-200">
+                          {month.label}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            {/* Shift Hour Distribution Ring/Meter */}
+            <div className="lg:col-span-4 bg-zinc-900 border border-zinc-800 rounded-2xl p-6 flex flex-col justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-zinc-200 font-sans flex items-center mb-1">
+                  <Clock className="h-4 w-4 mr-1.5 text-indigo-400" />
+                  Shift Hours Allocation
+                </h3>
+                <p className="text-[10px] text-zinc-500 font-sans mb-6">
+                  Day hours vs Night hours breakdown across all logged times
+                </p>
+
+                {allAttendance.length === 0 ? (
+                  <div className="py-12 text-center text-zinc-600 text-xs font-sans">
+                    No logged shifts found to analyze
+                  </div>
+                ) : (() => {
+                  const totalDays = allAttendance.filter(r => r.status === 'approved' && r.shiftType === 'day').reduce((sum, r) => sum + r.hoursWorked, 0);
+                  const totalNights = allAttendance.filter(r => r.status === 'approved' && r.shiftType === 'night').reduce((sum, r) => sum + r.hoursWorked, 0);
+                  const overallSum = totalDays + totalNights || 1;
+                  const dayPct = Math.round((totalDays / overallSum) * 100);
+                  const nightPct = Math.round((totalNights / overallSum) * 100);
+
+                  return (
+                    <div className="space-y-6">
+                      {/* Interactive Visual Bar Track */}
+                      <div className="space-y-2">
+                        <div className="flex justify-between text-xs font-bold font-sans">
+                          <span className="text-amber-400">Day shifts ({dayPct}%)</span>
+                          <span className="text-indigo-400">Night shifts ({nightPct}%)</span>
+                        </div>
+                        <div className="h-3 w-full bg-zinc-950 rounded-full overflow-hidden flex border border-zinc-800">
+                          <div style={{ width: `${dayPct}%` }} className="bg-gradient-to-r from-amber-500 to-amber-400 transition-all duration-500"></div>
+                          <div style={{ width: `${nightPct}%` }} className="bg-gradient-to-r from-indigo-500 to-indigo-600 transition-all duration-500"></div>
+                        </div>
+                      </div>
+
+                      {/* Detail Metrics */}
+                      <div className="grid grid-cols-2 gap-4 pt-2">
+                        <div className="p-3 bg-zinc-950 rounded-xl border border-zinc-850">
+                          <p className="text-[10px] font-bold text-zinc-500 uppercase font-sans">Day Hours</p>
+                          <p className="text-base font-black text-amber-400 font-mono mt-0.5">{totalDays.toFixed(1)} hrs</p>
+                          <span className="text-[9px] text-zinc-500 font-sans">Regular Day Shifts</span>
+                        </div>
+                        <div className="p-3 bg-zinc-950 rounded-xl border border-zinc-850">
+                          <p className="text-[10px] font-bold text-zinc-500 uppercase font-sans">Night Hours</p>
+                          <p className="text-base font-black text-indigo-400 font-mono mt-0.5">{totalNights.toFixed(1)} hrs</p>
+                          <span className="text-[9px] text-indigo-500 font-sans">Special Night Allowances</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+
+              <div className="border-t border-zinc-800/80 pt-4 mt-4 text-[10px] text-zinc-500 leading-relaxed font-sans flex items-start space-x-1">
+                <AlertCircle className="h-3.5 w-3.5 mt-0.5 text-zinc-400 shrink-0" />
+                <span>Shift data is generated from logs approved in your local attendance sheet registry.</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Payroll Invoice Report Receipt */}
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 shadow-sm">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between border-b border-zinc-800 pb-4 mb-6 gap-4">
+              <div>
+                <h3 className="text-base font-bold text-zinc-100 font-sans flex items-center">
+                  <Receipt className="h-5 w-5 mr-2 text-indigo-400" />
+                  Monthly Payroll Statement Receipt
+                </h3>
+                <p className="text-xs text-zinc-500 font-sans mt-0.5">
+                  Generate formal payslips optimized for physical printouts or text exports.
+                </p>
+              </div>
+
+              <div className="flex items-center space-x-2">
+                <button
+                  onClick={copyReportToClipboard}
+                  className="bg-zinc-950 border border-zinc-800 hover:border-zinc-700 text-zinc-300 rounded-xl py-2 px-3.5 text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5"
+                >
+                  {copiedNotification ? (
+                    <>
+                      <ClipboardCheck className="h-4 w-4 text-emerald-400 animate-bounce" />
+                      <span className="text-emerald-400">Copied!</span>
+                    </>
+                  ) : (
+                    <>
+                      <Clipboard className="h-4 w-4" />
+                      <span>Copy Text Receipt</span>
+                    </>
+                  )}
+                </button>
+                
+                <button
+                  onClick={() => window.print()}
+                  className="bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl py-2 px-4 text-xs font-bold shadow-md transition-all cursor-pointer flex items-center space-x-1.5"
+                >
+                  <Printer className="h-4 w-4" />
+                  <span>Print Report</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Receipt Stub */}
+            {(() => {
+              const data = getSelectedMonthReportData();
+              const [year, month] = analyticsPeriod.split('-');
+              const dateObj = new Date(parseInt(year), parseInt(month) - 1, 1);
+              const formattedMonth = dateObj.toLocaleString('default', { month: 'long', year: 'numeric' });
+
+              return (
+                <div id="print-area" className="bg-zinc-950 rounded-2xl border border-zinc-850 p-6 md:p-8 space-y-6 relative overflow-hidden print:bg-white print:text-black print:border-none print:shadow-none">
+                  {/* Decorative Watermark background */}
+                  <div className="absolute -right-16 -bottom-16 text-zinc-900/10 pointer-events-none text-9xl font-black font-mono select-none print:hidden">
+                    PAYROLL
+                  </div>
+
+                  {/* Receipt Header */}
+                  <div className="flex flex-col md:flex-row md:items-start md:justify-between border-b border-zinc-850 pb-6 gap-4 print:border-black">
+                    <div className="space-y-1">
+                      <div className="text-indigo-400 font-black text-sm uppercase tracking-widest print:text-black print:font-extrabold">
+                        OFFLINE ATTENDANCE SYSTEM
+                      </div>
+                      <h4 className="text-xl font-black text-zinc-100 font-sans tracking-tight print:text-black">
+                        Payroll Statement & Logs
+                      </h4>
+                      <p className="text-[10px] text-zinc-500 font-mono print:text-black/60">
+                        Registry Ref: OFF-PAY-LP-{year}-{month}
+                      </p>
+                    </div>
+
+                    <div className="text-left md:text-right font-sans">
+                      <span className="inline-block bg-indigo-600/10 text-indigo-400 text-[10px] font-black uppercase tracking-wider px-3 py-1 rounded-full border border-indigo-500/20 print:bg-none print:border-black print:text-black">
+                        Pay Period: {formattedMonth}
+                      </span>
+                      <p className="text-xs text-zinc-500 mt-2 font-mono print:text-black/60">
+                        Date Compiled: {new Date().toLocaleDateString()}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Party Details */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-xs border-b border-zinc-850 pb-6 print:border-black">
+                    <div>
+                      <p className="font-bold text-zinc-500 uppercase tracking-wider print:text-black">Employee Metadata</p>
+                      <table className="mt-2 w-full text-zinc-300 print:text-black">
+                        <tbody>
+                          <tr>
+                            <td className="py-1 text-zinc-500 pr-4 print:text-black/60">Full Name:</td>
+                            <td className="py-1 font-bold text-zinc-200 print:text-black">{profile.name}</td>
+                          </tr>
+                          <tr>
+                            <td className="py-1 text-zinc-500 pr-4 print:text-black/60">Designation:</td>
+                            <td className="py-1 font-semibold text-zinc-400 print:text-black">{profile.designation}</td>
+                          </tr>
+                          <tr>
+                            <td className="py-1 text-zinc-500 pr-4 print:text-black/60">Joined Date:</td>
+                            <td className="py-1 font-mono text-zinc-400 print:text-black">{profile.joinedDate || 'N/A'}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <div>
+                      <p className="font-bold text-zinc-500 uppercase tracking-wider print:text-black">Rate Configurations</p>
+                      <table className="mt-2 w-full text-zinc-300 print:text-black">
+                        <tbody>
+                          <tr>
+                            <td className="py-1 text-zinc-500 pr-4 print:text-black/60">Standard Rate:</td>
+                            <td className="py-1 font-mono font-bold text-zinc-200 print:text-black">{profile.hourlyRate} ৳/hr</td>
+                          </tr>
+                          <tr>
+                            <td className="py-1 text-zinc-500 pr-4 print:text-black/60">Night Shift Base:</td>
+                            <td className="py-1 font-mono text-zinc-400 print:text-black">{config.nightShiftBasicRate} ৳/hr</td>
+                          </tr>
+                          <tr>
+                            <td className="py-1 text-zinc-500 pr-4 print:text-black/60">Night Shift Allowance:</td>
+                            <td className="py-1 font-mono text-zinc-400 print:text-black">+{config.nightShiftAllowance} ৳/shift</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  {/* Summary Metric Blocks */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+                    <div className="p-4 bg-zinc-900 rounded-xl border border-zinc-850/50 print:bg-white print:border-black print:border">
+                      <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider print:text-black/60">Hours Registered</p>
+                      <p className="text-lg font-black text-zinc-150 font-mono mt-1 print:text-black">{data.totalHours} hrs</p>
+                    </div>
+                    <div className="p-4 bg-zinc-900 rounded-xl border border-zinc-850/50 print:bg-white print:border-black print:border">
+                      <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider print:text-black/60">Gross Earnings</p>
+                      <p className="text-lg font-black text-indigo-400 font-mono mt-1 print:text-black">{data.totalEarned} ৳</p>
+                    </div>
+                    <div className="p-4 bg-zinc-900 rounded-xl border border-zinc-850/50 print:bg-white print:border-black print:border">
+                      <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider print:text-black/60">Salary Advances</p>
+                      <p className="text-lg font-black text-amber-500 font-mono mt-1 print:text-black">{data.advanceTaken} ৳</p>
+                    </div>
+                    <div className="p-4 bg-zinc-900 rounded-xl border border-zinc-850/50 print:bg-white print:border-black print:border">
+                      <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider print:text-black/60">Net Payable</p>
+                      <p className="text-lg font-black text-emerald-400 font-mono mt-1 print:text-black">{data.netPayable} ৳</p>
+                    </div>
+                  </div>
+
+                  {/* Attendance Log Table */}
+                  <div className="space-y-3 pt-2">
+                    <h5 className="text-xs font-bold text-zinc-400 uppercase tracking-widest print:text-black">
+                      Approved Attendance Log Summary
+                    </h5>
+                    {data.monthAtts.length === 0 ? (
+                      <p className="text-xs text-zinc-600 font-sans italic print:text-black/60">No approved attendance entries found for this month.</p>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-xs border border-zinc-850 rounded-xl overflow-hidden print:border-black">
+                          <thead className="bg-zinc-900 text-zinc-400 uppercase tracking-wider text-[10px] font-bold print:bg-white print:text-black print:border-b print:border-black">
+                            <tr>
+                              <th className="p-3">Date</th>
+                              <th className="p-3">Shift Type</th>
+                              <th className="p-3">Logged Interval</th>
+                              <th className="p-3 text-right">Hours</th>
+                              <th className="p-3 text-right">Earned Sum</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-zinc-900 text-zinc-300 print:text-black print:divide-black">
+                            {data.monthAtts.map((att) => (
+                              <tr key={att.id} className="hover:bg-zinc-900/20 print:hover:bg-none">
+                                <td className="p-3 font-medium font-mono">{new Date(att.date).toLocaleDateString()}</td>
+                                <td className="p-3 font-semibold uppercase">{att.shiftType}</td>
+                                <td className="p-3 font-mono text-zinc-400 print:text-black">{formatTimeTo12Hour(att.startTime)} - {formatTimeTo12Hour(att.endTime)}</td>
+                                <td className="p-3 text-right font-mono">{att.hoursWorked} hrs</td>
+                                <td className="p-3 text-right font-mono font-bold text-zinc-100 print:text-black">{att.earnedAmount} ৳</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Advances Log Table */}
+                  {data.monthAdvs.length > 0 && (
+                    <div className="space-y-3 pt-2">
+                      <h5 className="text-xs font-bold text-zinc-400 uppercase tracking-widest print:text-black">
+                        Salary Advances Deducted
+                      </h5>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-xs border border-zinc-850 rounded-xl overflow-hidden print:border-black">
+                          <thead className="bg-zinc-900 text-zinc-400 uppercase tracking-wider text-[10px] font-bold print:bg-white print:text-black print:border-b print:border-black">
+                            <tr>
+                              <th className="p-3">Request Date</th>
+                              <th className="p-3">Explanation / Reason</th>
+                              <th className="p-3 text-right">Deduction Amount</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-zinc-900 text-zinc-300 print:text-black print:divide-black">
+                            {data.monthAdvs.map((adv) => (
+                              <tr key={adv.id} className="hover:bg-zinc-900/20 print:hover:bg-none">
+                                <td className="p-3 font-mono">{new Date(adv.requestedAt).toLocaleDateString()}</td>
+                                <td className="p-3 text-zinc-400 print:text-black italic">"{adv.reason}"</td>
+                                <td className="p-3 text-right font-mono font-extrabold text-amber-500 print:text-black">-{adv.amount} ৳</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Signatures for Printouts */}
+                  <div className="hidden print:grid grid-cols-2 gap-12 pt-16 text-xs text-center font-sans">
+                    <div>
+                      <div className="border-t border-black w-48 mx-auto mt-8"></div>
+                      <p className="mt-2 font-bold">Employee Signature</p>
+                      <p className="text-black/60">{profile.name}</p>
+                    </div>
+                    <div>
+                      <div className="border-t border-black w-48 mx-auto mt-8"></div>
+                      <p className="mt-2 font-bold">HR / Accounts Signature</p>
+                      <p className="text-black/60">System Auto-Verified</p>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        </div>
       )}
 
       {activeTab === 'profile' && (

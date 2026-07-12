@@ -344,3 +344,18 @@ export async function localSignUp(
 export async function seedDemoDataForEmployee(employeeUid: string, employeeName: string, payPeriod: string, hourlyRate: number): Promise<void> {
   // Empty to ensure zero data as requested
 }
+
+export async function getEmployeeAllAttendance(employeeId: string): Promise<AttendanceRecord[]> {
+  const records = getLocalAttendance();
+  return records
+    .filter((r) => r.employeeId === employeeId)
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
+export async function getEmployeeAllAdvances(employeeId: string): Promise<AdvanceRequest[]> {
+  const reqs = getLocalAdvances();
+  return reqs
+    .filter((r) => r.employeeId === employeeId)
+    .sort((a, b) => a.requestedAt.localeCompare(b.requestedAt));
+}
+

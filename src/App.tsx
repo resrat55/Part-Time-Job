@@ -12,9 +12,39 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
-  // Restore local user session on mount
+  // Restore local user session on mount or auto-generate a single default user
   useEffect(() => {
-    const savedLocalUser = localStorage.getItem('attendance_local_user');
+    let savedLocalUser = localStorage.getItem('attendance_local_user');
+    
+    if (!savedLocalUser) {
+      const defaultUser = {
+        uid: 'single_employee',
+        email: 'employee@offline.local',
+        name: 'John Doe',
+        designation: 'General Associate',
+        role: 'employee',
+        hourlyRate: 200,
+        joinedDate: new Date().toISOString().substring(0, 10),
+        status: 'active'
+      };
+
+      // Ensure the single employee is inside local users database
+      const currentUsers = localStorage.getItem('attendance_local_users');
+      let usersList = currentUsers ? JSON.parse(currentUsers) : [];
+      if (!usersList.some((u: any) => u.uid === 'single_employee')) {
+        usersList.push(defaultUser);
+        localStorage.setItem('attendance_local_users', JSON.stringify(usersList));
+      }
+
+      // Automatically sign in
+      localStorage.setItem('attendance_local_user', JSON.stringify({
+        uid: 'single_employee',
+        email: 'employee@offline.local',
+        role: 'employee'
+      }));
+      savedLocalUser = localStorage.getItem('attendance_local_user');
+    }
+
     if (savedLocalUser) {
       try {
         const parsed = JSON.parse(savedLocalUser);
@@ -23,7 +53,7 @@ export default function App() {
         console.error('Error parsing local user session:', err);
       }
     }
-  }, []);
+  }, [refreshTrigger]);
 
   // Initialize and load system configuration and user profile
   const loadConfigAndProfile = async (uid: string) => {
@@ -43,10 +73,6 @@ export default function App() {
     if (activeUid) {
       setLoading(true);
       loadConfigAndProfile(activeUid).finally(() => setLoading(false));
-    } else {
-      // Just load config in background to be ready
-      getSystemConfig().then(cfg => setConfig(cfg)).catch(err => console.error(err));
-      setLoading(false);
     }
   }, [localUser, refreshTrigger]);
 
