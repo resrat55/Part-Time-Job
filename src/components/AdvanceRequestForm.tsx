@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { EmployeeProfile, AdvanceRequest, SystemConfig } from '../types';
 import { submitAdvanceRequest, getEmployeeAdvanceRequests, deleteAdvanceRequest } from '../dbUtils';
-import { Landmark, ArrowUpRight, HelpCircle, AlertCircle, History, Clock, CheckCircle2, XCircle, Trash2 } from 'lucide-react';
+import { Landmark, ArrowUpRight, HelpCircle, AlertCircle, History, Clock, CheckCircle2, XCircle, Trash2, Calendar } from 'lucide-react';
 
 interface AdvanceRequestFormProps {
   profile: EmployeeProfile;
@@ -11,6 +11,7 @@ interface AdvanceRequestFormProps {
 }
 
 export default function AdvanceRequestForm({ profile, config, onSuccess, refreshTrigger }: AdvanceRequestFormProps) {
+  const [requestDate, setRequestDate] = useState(new Date().toISOString().substring(0, 10));
   const [amount, setAmount] = useState('');
   const [reason, setReason] = useState('');
   const [requests, setRequests] = useState<AdvanceRequest[]>([]);
@@ -18,9 +19,11 @@ export default function AdvanceRequestForm({ profile, config, onSuccess, refresh
   const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
 
+  const currentPayPeriod = requestDate.substring(0, 7) || new Date().toISOString().substring(0, 7);
+
   const fetchRequests = async () => {
     try {
-      const list = await getEmployeeAdvanceRequests(profile.uid, config.currentPayPeriod);
+      const list = await getEmployeeAdvanceRequests(profile.uid, currentPayPeriod);
       setRequests(list);
     } catch (err) {
       console.error('Error fetching advances:', err);
@@ -29,7 +32,7 @@ export default function AdvanceRequestForm({ profile, config, onSuccess, refresh
 
   useEffect(() => {
     fetchRequests();
-  }, [profile.uid, config.currentPayPeriod, refreshTrigger]);
+  }, [profile.uid, currentPayPeriod, refreshTrigger]);
 
   const handleDelete = async (id: string) => {
     if (confirm('Are you sure you want to delete this advance request?')) {
@@ -57,18 +60,19 @@ export default function AdvanceRequestForm({ profile, config, onSuccess, refresh
 
     setLoading(true);
     try {
+      const computedPayPeriod = requestDate.substring(0, 7);
       const newRequest: Omit<AdvanceRequest, 'id'> = {
         employeeId: profile.uid,
         employeeName: profile.name,
         amount: amtNum,
         reason: reason.trim(),
         status: 'approved',
-        payPeriod: config.currentPayPeriod,
-        requestedAt: new Date().toISOString(),
+        payPeriod: computedPayPeriod,
+        requestedAt: new Date(requestDate).toISOString(),
       };
 
       await submitAdvanceRequest(newRequest);
-      setSuccess('Advance request submitted and auto-approved instantly!');
+      setSuccess(`Advance request submitted and recorded for pay period (${computedPayPeriod})!`);
       setAmount('');
       setReason('');
       onSuccess();
@@ -105,6 +109,22 @@ export default function AdvanceRequestForm({ profile, config, onSuccess, refresh
         )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-1">
+              Request Date
+            </label>
+            <div className="relative">
+              <Calendar className="absolute left-3 top-2.5 h-4 w-4 text-zinc-500" />
+              <input
+                type="date"
+                required
+                value={requestDate}
+                onChange={(e) => setRequestDate(e.target.value)}
+                className="w-full bg-zinc-950 border border-zinc-800 text-zinc-100 rounded-xl py-2 pl-9 pr-4 text-sm focus:outline-none focus:border-indigo-500 transition-colors [color-scheme:dark]"
+              />
+            </div>
+          </div>
+
           <div>
             <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-1">
               Requested Amount (Taka / ৳)

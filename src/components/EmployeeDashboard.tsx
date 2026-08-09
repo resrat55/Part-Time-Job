@@ -8,7 +8,8 @@ import {
   addAnnouncement,
   deleteAnnouncement,
   getEmployeeAllAttendance,
-  getEmployeeAllAdvances
+  getEmployeeAllAdvances,
+  updateSystemConfig
 } from '../dbUtils';
 import AttendanceForm from './AttendanceForm';
 import AdvanceRequestForm from './AdvanceRequestForm';
@@ -46,20 +47,23 @@ interface EmployeeDashboardProps {
 }
 
 export default function EmployeeDashboard({ profile, config, onLogout, onProfileUpdate }: EmployeeDashboardProps) {
+  const currentRealMonth = new Date().toISOString().substring(0, 7);
   const [activeTab, setActiveTab] = useState<'overview' | 'attendance' | 'advance' | 'analytics' | 'profile'>('overview');
   const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
   const [allAttendance, setAllAttendance] = useState<AttendanceRecord[]>([]);
   const [allAdvances, setAllAdvances] = useState<AdvanceRequest[]>([]);
-  const [selectedPeriod, setSelectedPeriod] = useState(config.currentPayPeriod);
-  const [analyticsPeriod, setAnalyticsPeriod] = useState(config.currentPayPeriod);
+  const [selectedPeriod, setSelectedPeriod] = useState(currentRealMonth);
+  const [analyticsPeriod, setAnalyticsPeriod] = useState(currentRealMonth);
   const [copiedNotification, setCopiedNotification] = useState(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [editingRecord, setEditingRecord] = useState<AttendanceRecord | null>(null);
 
-  // Profile Form States
+  // Profile & Rate Configuration Form States
   const [profileName, setProfileName] = useState(profile.name);
   const [profileDesignation, setProfileDesignation] = useState(profile.designation);
   const [profileRate, setProfileRate] = useState(profile.hourlyRate.toString());
+  const [nightBasicRate, setNightBasicRate] = useState(config.nightShiftBasicRate.toString());
+  const [nightAllowance, setNightAllowance] = useState(config.nightShiftAllowance.toString());
   const [profileSuccess, setProfileSuccess] = useState('');
   const [profileError, setProfileError] = useState('');
 
@@ -68,12 +72,14 @@ export default function EmployeeDashboard({ profile, config, onLogout, onProfile
   const [newAnnTitle, setNewAnnTitle] = useState('');
   const [newAnnContent, setNewAnnContent] = useState('');
 
-  // Sync profile state variables if parent profile updates
+  // Sync profile & config state variables if parent updates
   useEffect(() => {
     setProfileName(profile.name);
     setProfileDesignation(profile.designation);
     setProfileRate(profile.hourlyRate.toString());
-  }, [profile]);
+    setNightBasicRate(config.nightShiftBasicRate.toString());
+    setNightAllowance(config.nightShiftAllowance.toString());
+  }, [profile, config]);
 
   // Load announcements whenever we enter profile tab or refresh
   useEffect(() => {
@@ -144,17 +150,34 @@ export default function EmployeeDashboard({ profile, config, onLogout, onProfile
   }, [attendance, profile.uid, selectedPeriod, refreshTrigger]);
 
   const getPeriodOptions = () => {
-    const options = [];
-    const date = new Date();
-    for (let i = 0; i < 6; i++) {
-      const year = date.getFullYear();
-      const month = String(date.getMonth() + 1).padStart(2, '0');
-      const label = date.toLocaleString('default', { month: 'long', year: 'numeric' });
-      const value = `${year}-${month}`;
-      options.push({ label, value });
-      date.setMonth(date.getMonth() - 1);
+    const periodSet = new Set<string>();
+    
+    // Always include current real calendar month
+    const now = new Date();
+    const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    periodSet.add(currentMonth);
+
+    // Include last 12 months
+    const d = new Date();
+    for (let i = 0; i < 12; i++) {
+      const yr = d.getFullYear();
+      const mn = String(d.getMonth() + 1).padStart(2, '0');
+      periodSet.add(`${yr}-${mn}`);
+      d.setMonth(d.getMonth() - 1);
     }
-    return options;
+
+    // Include any payPeriod from records
+    allAttendance.forEach((r) => { if (r.payPeriod) periodSet.add(r.payPeriod); });
+    allAdvances.forEach((a) => { if (a.payPeriod) periodSet.add(a.payPeriod); });
+
+    const sortedPeriods = Array.from(periodSet).sort((a, b) => b.localeCompare(a));
+
+    return sortedPeriods.map((period) => {
+      const [yearStr, monthStr] = period.split('-');
+      const dateObj = new Date(parseInt(yearStr, 10), parseInt(monthStr, 10) - 1, 1);
+      const label = dateObj.toLocaleString('default', { month: 'long', year: 'numeric' });
+      return { label, value: period };
+    });
   };
 
   const getMonthlyAnalytics = () => {
@@ -342,6 +365,13 @@ export default function EmployeeDashboard({ profile, config, onLogout, onProfile
       return;
     }
 
+    const parsedNightBasic = parseFloat(nightBasicRate);
+    const parsedNightAllowance = parseFloat(nightAllowance);
+    if (isNaN(parsedNightBasic) || parsedNightBasic < 0 || isNaN(parsedNightAllowance) || parsedNightAllowance < 0) {
+      setProfileError('Please enter valid night shift rate and bonus numbers.');
+      return;
+    }
+
     if (!profileName.trim()) {
       setProfileError('Name cannot be empty.');
       return;
@@ -353,7 +383,13 @@ export default function EmployeeDashboard({ profile, config, onLogout, onProfile
         designation: profileDesignation.trim(),
         hourlyRate: parsedRate,
       });
-      setProfileSuccess(`Your profile settings and hourly rate have been saved successfully! Future attendance logs will use the new rate of ${parsedRate} ৳/hr.`);
+
+      await updateSystemConfig({
+        nightShiftBasicRate: parsedNightBasic,
+        nightShiftAllowance: parsedNightAllowance,
+      });
+
+      setProfileSuccess('Your profile settings, hourly rate, and Night Announcement Bonus have been saved successfully!');
       onProfileUpdate(); // Reload App and propagate new details
     } catch (err) {
       console.error(err);
@@ -1191,7 +1227,7 @@ export default function EmployeeDashboard({ profile, config, onLogout, onProfile
 
                 <div>
                   <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-1">
-                    Hourly Rate (৳/hr)
+                    Standard Hourly Rate (৳/hr)
                   </label>
                   <div className="relative">
                     <input
@@ -1204,6 +1240,46 @@ export default function EmployeeDashboard({ profile, config, onLogout, onProfile
                     />
                     <span className="absolute right-3 top-2.5 text-zinc-500 text-xs font-bold font-sans">
                       ৳/hr
+                    </span>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-indigo-400 mb-1 flex items-center">
+                    <Moon className="h-3.5 w-3.5 mr-1 text-indigo-400" />
+                    Night Shift Basic Rate (৳/hr)
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="number"
+                      step="any"
+                      value={nightBasicRate}
+                      onChange={(e) => setNightBasicRate(e.target.value)}
+                      className="w-full bg-zinc-950 border border-zinc-850 focus:border-indigo-500 focus:outline-none rounded-xl py-2 pl-3 pr-10 text-sm text-zinc-100 font-mono transition-colors"
+                      placeholder="e.g. 70"
+                    />
+                    <span className="absolute right-3 top-2.5 text-zinc-500 text-xs font-bold font-sans">
+                      ৳/hr
+                    </span>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-amber-400 mb-1 flex items-center">
+                    <Sparkles className="h-3.5 w-3.5 mr-1 text-amber-400" />
+                    Night Shift Announcement Bonus (৳/shift)
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="number"
+                      step="any"
+                      value={nightAllowance}
+                      onChange={(e) => setNightAllowance(e.target.value)}
+                      className="w-full bg-zinc-950 border border-zinc-850 focus:border-indigo-500 focus:outline-none rounded-xl py-2 pl-3 pr-10 text-sm text-zinc-100 font-mono transition-colors"
+                      placeholder="e.g. 100"
+                    />
+                    <span className="absolute right-3 top-2.5 text-zinc-500 text-xs font-bold font-sans">
+                      ৳/shift
                     </span>
                   </div>
                 </div>

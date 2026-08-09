@@ -46,15 +46,19 @@ export function seedDefaultDemoUsers(): void {
 
 // Ensure standard configuration exists
 export async function ensureSystemConfig(): Promise<SystemConfig> {
+  const currentMonth = new Date().toISOString().substring(0, 7);
   const saved = localStorage.getItem('attendance_local_config');
   if (saved) {
-    return JSON.parse(saved) as SystemConfig;
+    const parsed = JSON.parse(saved) as SystemConfig;
+    const updated = { ...parsed, currentPayPeriod: currentMonth };
+    localStorage.setItem('attendance_local_config', JSON.stringify(updated));
+    return updated;
   }
   const defaultConfig: SystemConfig = {
     defaultHourlyRate: 200, // default rate in Taka
     nightShiftBasicRate: 70, // per hour basic night shift rate
     nightShiftAllowance: 100, // extra night shift allowance per shift
-    currentPayPeriod: new Date().toISOString().substring(0, 7), // "YYYY-MM"
+    currentPayPeriod: currentMonth, // "YYYY-MM"
   };
   localStorage.setItem('attendance_local_config', JSON.stringify(defaultConfig));
   return defaultConfig;
@@ -169,6 +173,28 @@ export async function deleteAnnouncement(id: string): Promise<void> {
 }
 
 // Attendance Records
+export function compareAttendanceRecords(a: AttendanceRecord, b: AttendanceRecord): number {
+  // 1. Compare Date ascending (e.g. "2026-07-05" before "2026-07-06")
+  const dateCompare = a.date.localeCompare(b.date);
+  if (dateCompare !== 0) return dateCompare;
+
+  // 2. Same Date: Compare Start Time ascending (e.g. "08:00" morning before "21:00" night)
+  const timeA = a.startTime || '00:00';
+  const timeB = b.startTime || '00:00';
+  const timeCompare = timeA.localeCompare(timeB);
+  if (timeCompare !== 0) return timeCompare;
+
+  // 3. Compare shift type (day before night)
+  if (a.shiftType !== b.shiftType) {
+    return a.shiftType === 'day' ? -1 : 1;
+  }
+
+  // 4. Compare createdAt or id as fallback
+  const createdA = a.createdAt || a.id || '';
+  const createdB = b.createdAt || b.id || '';
+  return createdA.localeCompare(createdB);
+}
+
 export async function addAttendanceRecord(record: Omit<AttendanceRecord, 'id'>): Promise<string> {
   const records = getLocalAttendance();
   const id = `att_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
@@ -182,14 +208,14 @@ export async function getEmployeeAttendance(employeeId: string, payPeriod: strin
   const records = getLocalAttendance();
   return records
     .filter((r) => r.employeeId === employeeId && r.payPeriod === payPeriod)
-    .sort((a, b) => b.date.localeCompare(a.date));
+    .sort(compareAttendanceRecords);
 }
 
 export async function getAllAttendance(payPeriod: string): Promise<AttendanceRecord[]> {
   const records = getLocalAttendance();
   return records
     .filter((r) => r.payPeriod === payPeriod)
-    .sort((a, b) => b.date.localeCompare(a.date));
+    .sort(compareAttendanceRecords);
 }
 
 export async function updateAttendanceRecordStatus(id: string, status: RecordStatus): Promise<void> {
@@ -349,7 +375,7 @@ export async function getEmployeeAllAttendance(employeeId: string): Promise<Atte
   const records = getLocalAttendance();
   return records
     .filter((r) => r.employeeId === employeeId)
-    .sort((a, b) => a.date.localeCompare(b.date));
+    .sort(compareAttendanceRecords);
 }
 
 export async function getEmployeeAllAdvances(employeeId: string): Promise<AdvanceRequest[]> {
